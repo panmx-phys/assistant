@@ -31,7 +31,7 @@ echo "GEMINI_API_KEY=your_key_here" > .env
 Starts the backend and optional TTS, then opens an interactive chat:
 
 ```bash
-go run ./cli
+cd cli && go run .
 ```
 
 **Option B — Backend only**  

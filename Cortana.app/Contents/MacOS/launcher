@@ -6,4 +6,4 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 
 osascript -e "tell application \"Terminal\" to activate" \
-          -e "tell application \"Terminal\" to do script \"cd \\\"$PROJECT_DIR\\\" && ./cli/cortana\""
+          -e "tell application \"Terminal\" to do script \"cd \\\"$PROJECT_DIR/cli\\\" && go run .\""

@@ -58,7 +58,7 @@ User → Go CLI | Cortana.app | HTTP client
 
 ## Deployment
 
-1. **CLI**: `pip install -r requirements.txt`, set GEMINI_API_KEY, `go run ./cli` or binary. Starts service + tts.
+1. **CLI**: `pip install -r requirements.txt`, set GEMINI_API_KEY, `cd cli && go run .` or binary. Starts service + tts.
 2. **Service only**: `python service.py` or uvicorn. CORTANA_PORT. Clients POST /chat, POST /command.
 3. **TTS**: CLI starts tts.py; or `python tts.py [--socket ...] [--backend ...]`. No TTS → chat text-only.
 4. **macOS**: Cortana.app runs CLI; needs project dir so service.py, tts.py found.
