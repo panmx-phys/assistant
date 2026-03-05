@@ -1,0 +1,114 @@
+# API Keys
+api_keys:
+  gemini: ${GEMINI_API_KEY}           # default / flash
+  gemini_pro: ${GEMINI_PRO_API_KEY}   # separate key for Pro
+
+# ┌──────────────────────────────────────────────────┐
+# │  Provider types:                                 │
+# │    gemini  → Gemini API (pay per token)          │
+# │    ollama  → local Ollama (free, no API key)     │
+# └──────────────────────────────────────────────────┘
+
+models:
+  gemini_flash_api:
+    provider: gemini
+    model: gemini-3.1-flash-lite-preview
+    api_key: gemini             # uses api_keys.gemini
+    max_tokens: 2048
+    temperature: 0.7
+    description: "Gemini Flash via API"
+  gemini_pro_api:
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    api_key: gemini_pro         # uses api_keys.gemini_pro
+    max_tokens: 4096
+    temperature: 0.5
+    description: "Gemini Pro via API"
+
+  # ── Ollama models (FREE, local) ──
+  ollama_gemma:
+    provider: ollama
+    model: gemma3:1b
+    max_tokens: 2048
+    temperature: 0.7
+    description: "Gemma 3 1B via Ollama (local)"
+
+# Classifier — cheap LLM call to detect intent + topic
+classifier:
+  provider: ollama              # "gemini" or "ollama"
+  model: gemma3:1b              # small local model for fast classification
+  base_url: http://localhost:11434
+
+# Router settings
+router:
+  default_casual: gemini_flash_api
+  default_deep: gemini_pro_api
+
+# Memory settings
+memory:
+  recall_limit: 5
+  chromadb:
+    path: ./data/chromadb
+    collection: companion
+  ollama:
+    base_url: http://localhost:11434
+    embedding_model: nomic-embed-text
+    extraction_model: qwen3:1.7b
+  # When Ollama is not installed or unavailable, use Gemini for fact extraction
+  extraction_fallback:
+    model: gemini-2.5-flash-lite
+    api_key: gemini
+  declutter:
+    model: gemini-3.1-flash-lite-preview   # Gemini model used by /declutter
+    api_key: gemini                 # which api_keys entry to use
+
+# Debug — log full LLM requests/responses (also toggled at runtime via /debug)
+debug: false
+
+# Text-to-speech
+tts:
+  backend: gemini           # kokoro | elevenlabs | google | gemini
+  speed: 1.1                # speech speed: 0.5 (slow) to 2.0 (fast)
+
+  # ── Kokoro (local, no API key) ──
+  voice: af_heart           # kokoro voice preset (see list below)
+  lang: a                   # kokoro language: a = American, b = British
+  # Voices:
+  #   American Female: af_heart (best), af_bella, af_nicole, af_sarah,
+  #                    af_sky, af_nova, af_alloy, af_aoede, af_kore,
+  #                    af_jessica, af_river
+  #   American Male:   am_adam, am_michael, am_fenrir, am_puck,
+  #                    am_eric, am_liam, am_echo, am_onyx, am_santa
+  #   British Female:  bf_emma, bf_isabella, bf_alice, bf_lily
+  #   British Male:    bm_george, bm_lewis, bm_daniel, bm_fable
+
+  # ── ElevenLabs (API) ──
+  elevenlabs:
+    api_key: ${ELEVENLABS_API_KEY}
+    model: eleven_multilingual_v2
+    voice_id: Rachel
+    speed: 1.1                # ElevenLabs speech speed (0.5–2.0)
+
+  # ── Google Cloud TTS (API) ──
+  google:
+    api_key: ${GOOGLE_TTS_API_KEY}
+    language_code: en-US
+    voice_name: en-US-Journey-F
+    speed: 1.1                # Google TTS speaking rate (0.25–4.0)
+
+  # ── Gemini 2.5 Flash TTS (API, reuses Gemini key) ──
+  gemini_tts:
+    api_key: ${GEMINI_API_KEY}
+    model: gemini-2.5-flash-preview-tts
+    voice_name: Aoede
+    speed: 1.1                # not natively supported — applied via post-processing
+    # Voices: Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede,
+    #         Callirrhoe, Autonoe, Enceladus, Iapetus, Umbriel, Algieba,
+    #         Despina, Erinome, Algenib, Rasalgethi, Laomedeia, Achernar,
+    #         Alnilam, Schedar, Gacrux, Pulcherrima, Achird,
+    #         Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
+
+# UI settings
+ui:
+  title: "AI Companion"
+  default_topic: general
