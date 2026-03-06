@@ -2,6 +2,7 @@
 """FastAPI service wrapping the Chat engine — exposes SSE streaming + commands."""
 from __future__ import annotations
 
+import base64
 import asyncio
 import json
 import os
@@ -15,6 +16,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from chat import Chat
 import config
+from live import run_live_turn
 
 # ── Lifespan ──────────────────────────────────────────────────────────
 
@@ -36,6 +38,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 class ChatRequest(BaseModel):
     message: str
+    use_live: bool = False  # use Gemini Live API for voice + text (optional)
 
 
 class CommandRequest(BaseModel):
@@ -63,12 +66,51 @@ async def models():
         "aliases": config.ALIASES,
         "current": chat._model_key,
         "current_description": chat.model.get("description", chat.model["model"]),
+        "live": {
+            "enabled": config.LIVE_ENABLED,
+            "model": config.LIVE_MODEL if config.LIVE_ENABLED else None,
+        },
     }
 
 
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
+    use_live = req.use_live and config.LIVE_ENABLED
+    live_client = config.get_live_client() if use_live else None
+
     async def generate():
+        if use_live and live_client:
+            # Gemini Live path: stream text + audio from Live API (no TTS)
+            async with _chat_lock:
+                system, recent = chat._prepare(req.message)
+                full_prompt = chat._build_user_prompt(recent)
+                text_parts: list[str] = []
+                try:
+                    async for kind, data in run_live_turn(
+                        live_client,
+                        config.LIVE_MODEL,
+                        system,
+                        full_prompt,
+                    ):
+                        if kind == "text":
+                            text_parts.append(data)
+                            yield {"data": json.dumps({"chunk": data})}
+                        elif kind == "audio":
+                            yield {"data": json.dumps({"audio": base64.b64encode(data).decode()})}
+                        elif kind == "error":
+                            yield {"data": json.dumps({"error": data})}
+                        elif kind == "done":
+                            break
+                    response_text = "".join(text_parts)
+                    chat._history.append({"role": "assistant", "content": response_text})
+                    chat._store_safe(req.message, response_text)
+                    yield {"data": json.dumps({"done": True, "model": config.LIVE_MODEL, "live": True})}
+                except Exception as e:
+                    yield {"data": json.dumps({"error": str(e)})}
+                    yield {"data": json.dumps({"done": True, "model": config.LIVE_MODEL, "live": True})}
+            return
+
+        # Default: stream text + TTS
         async with _chat_lock:
             label = chat.model.get("description", chat.model["model"])
             q: asyncio.Queue = asyncio.Queue()
@@ -80,7 +122,6 @@ async def chat_endpoint(req: ChatRequest):
                     first_chunk = True
                     for chunk in chat.send_stream(req.message):
                         if first_chunk:
-                            # Set emotion hint from LLM before first audio synthesis
                             chat.tts.set_emotion(chat.last_emotion)
                             first_chunk = False
                         chat.tts.feed(chunk)

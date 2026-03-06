@@ -26,7 +26,8 @@ func NewClient(baseURL string) *Client {
 // ── Request / Response types ─────────────────────────────────────────
 
 type ChatRequest struct {
-	Message string `json:"message"`
+	Message  string `json:"message"`
+	UseLive  bool   `json:"use_live,omitempty"` // use Gemini Live API for voice+text when enabled
 }
 
 type CommandRequest struct {
@@ -41,9 +42,11 @@ type CommandResponse struct {
 
 type SSEEvent struct {
 	Chunk string `json:"chunk,omitempty"`
+	Audio string `json:"audio,omitempty"` // base64-encoded PCM when use_live
 	Done  bool   `json:"done"`
 	Model string `json:"model,omitempty"`
 	Error string `json:"error,omitempty"`
+	Live  bool   `json:"live,omitempty"`
 }
 
 type ModelInfo struct {
@@ -102,9 +105,10 @@ func (c *Client) Command(cmd string) (*CommandResponse, error) {
 }
 
 // StreamChat sends a message and calls onChunk for each streamed text chunk.
+// If useLive is true and the server has Live enabled, uses Gemini Live API (may also send audio; audio is ignored here).
 // Returns the model label when done.
-func (c *Client) StreamChat(msg string, onChunk func(string)) (string, error) {
-	body, _ := json.Marshal(ChatRequest{Message: msg})
+func (c *Client) StreamChat(msg string, onChunk func(string), useLive bool) (string, error) {
+	body, _ := json.Marshal(ChatRequest{Message: msg, UseLive: useLive})
 	req, err := http.NewRequest("POST", c.baseURL+"/chat", bytes.NewReader(body))
 	if err != nil {
 		return "", err

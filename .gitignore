@@ -9,3 +9,11 @@ build/
 .DS_Store
 data/
 archive/
+cli/.gocache/
+cli/.gomodcache/
+cli/.gopath/
+cli/bin/
+desktop/.gocache/
+desktop/.gomodcache/
+desktop/.gopath/
+desktop/cortana-desktop

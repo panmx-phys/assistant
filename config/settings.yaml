@@ -65,6 +65,15 @@ memory:
 # Debug — log full LLM requests/responses (also toggled at runtime via /debug)
 debug: false
 
+# Gemini Live API — optional voice + text (real-time, native audio). When enabled,
+# clients can request use_live on /chat to get streamed text and audio from Live
+# instead of TTS. Requires a Live-capable model (e.g. gemini-2.0-flash-live).
+live:
+  enabled: false
+  # Live-capable model (e.g. gemini-2.0-flash-live-preview-04-09 or gemini-2.5-flash native audio)
+  model: gemini-2.0-flash-live-preview-04-09
+  api_key: gemini   # uses api_keys.gemini
+
 # Text-to-speech
 tts:
   backend: gemini           # kokoro | elevenlabs | google | gemini
@@ -102,6 +111,36 @@ tts:
     model: gemini-2.5-flash-preview-tts
     voice_name: Aoede
     speed: 1.1                # not natively supported — applied via post-processing
+    # Global modifier appended to every emotion style prompt.
+    # Example: "Keep a warm, natural cadence with clear articulation."
+    emotion_style_global_modifier: "slightly faster"
+    # Optional per-emotion prompt tuning for Gemini TTS.
+    # Keys should match chat emotion tags:
+    # neutral, happy, sad, excited, calm, serious, playful, empathetic, curious, annoyed
+    emotion_style_prompts:
+      neutral: "You are an assistant speaking in a clear, friendly, and helpful tone."
+      happy: "You are an assistant speaking in a warm, upbeat, and cheerful tone."
+      sad: "You are an assistant speaking softly with a gentle, somber tone."
+      excited: "You are an assistant speaking with energetic enthusiasm and bright pacing."
+      calm: "You are an assistant speaking calmly, steadily, and reassuringly."
+      serious: "You are an assistant speaking in a measured, authoritative, and professional tone."
+      playful: "You are an assistant speaking in a playful, lighthearted, and expressive tone."
+      empathetic: "You are an assistant speaking with empathy, care, and emotional sensitivity."
+      curious: "You are an assistant speaking with inquisitive curiosity and thoughtful emphasis."
+      annoyed: "You are an assistant speaking with restrained irritation, keeping clarity and control."
+    # Optional localized modifiers (Gemini preview markup tags).
+    # Set a value to "" to disable a modifier for that emotion.
+    emotion_markup_prefixes:
+      neutral: ""
+      happy: "[laughing] "
+      sad: "[sigh] "
+      excited: "[shouting] "
+      calm: "[medium pause] "
+      serious: "[short pause] "
+      playful: "[laughing] "
+      empathetic: "[medium pause] "
+      curious: "[uhm] "
+      annoyed: "[sarcasm] "
     # Voices: Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede,
     #         Callirrhoe, Autonoe, Enceladus, Iapetus, Umbriel, Algieba,
     #         Despina, Erinome, Algenib, Rasalgethi, Laomedeia, Achernar,

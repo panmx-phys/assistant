@@ -278,7 +278,7 @@ class Chat:
                 return (
                     f"Current backend: {self.tts._backend_name if hasattr(self.tts, '_backend_name') else 'kokoro'}\n"
                     f"Available: {', '.join(BACKENDS)}\n"
-                    "Usage: /ttsbackend <kokoro|elevenlabs|google>"
+                    "Usage: /ttsbackend <kokoro|elevenlabs|google|gemini>"
                 )
             from tts import BACKENDS
             if arg not in BACKENDS:
@@ -302,7 +302,7 @@ class Chat:
                 "  /clearmemories      Delete all stored memories\n"
                 "  /clear              Clear conversation history\n"
                 "  /tts                Toggle text-to-speech\n"
-                "  /ttsbackend [name]  Switch TTS backend (kokoro, elevenlabs, google)\n"
+                "  /ttsbackend [name]  Switch TTS backend (kokoro, elevenlabs, google, gemini)\n"
                 "  /voice [preset]     Switch TTS voice/language (en, zh, ...)\n"
                 "  /declutter          Merge duplicates & prune low-value memories\n"
                 "  /backfill           Score all memories by significance\n"

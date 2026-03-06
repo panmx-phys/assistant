@@ -132,6 +132,7 @@ func main() {
 		}
 
 		// Streaming chat — collect chunks, show a spinner, then render panel
+		useLive := os.Getenv("CORTANA_USE_LIVE") == "1" || os.Getenv("CORTANA_USE_LIVE") == "true"
 		fmt.Print("\n\033[38;5;74m⠋ thinking...\033[0m")
 		spinFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		spinIdx := 0
@@ -140,7 +141,7 @@ func main() {
 			accumulated.WriteString(chunk)
 			spinIdx = (spinIdx + 1) % len(spinFrames)
 			fmt.Printf("\r\033[2K\033[38;5;74m%s streaming...\033[0m", spinFrames[spinIdx])
-		})
+		}, useLive)
 		fmt.Print("\r\033[2K") // clear spinner line
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)

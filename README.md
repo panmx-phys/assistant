@@ -46,6 +46,13 @@ python service.py
 **Option C — macOS app**  
 If you have the `Cortana.app` bundle, run it. Ensure the app can find the project directory (e.g. keep the app next to the project or set the working directory accordingly).
 
+**Option D — Go desktop UI (native window)**  
+Runs a real chat window (compiled Go app) and starts backend/TTS automatically:
+
+```bash
+cd desktop && go run .
+```
+
 ### 4. In the chat
 
 - Type a message and press Enter for a streaming reply.  
@@ -76,8 +83,8 @@ If you have the `Cortana.app` bundle, run it. Ensure the app can find the projec
 
 4. Point clients at `http://<host>:8391` (or your port).  
    - **Health**: `GET /health`  
-   - **Models**: `GET /models`  
-   - **Chat (streaming)**: `POST /chat` with `{"message": "..."}`; response is SSE.  
+   - **Models**: `GET /models` (includes `live.enabled` and `live.model` when Live is configured).  
+   - **Chat (streaming)**: `POST /chat` with `{"message": "..."}`; optional `"use_live": true` to use Gemini Live API for voice+text. Response is SSE (`chunk`, optional `audio` base64, `done`).  
    - **Commands**: `POST /command` with `{"command": "/model flash"}` (or any slash command).
 
 ### With TTS (voice)
@@ -86,11 +93,25 @@ If you have the `Cortana.app` bundle, run it. Ensure the app can find the projec
 - **Standalone TTS**: run `python tts.py` (optionally with `--socket`, `--backend`, `--voice`, `--lang`, `--speed`). Default socket: `/tmp/tts.sock`.  
 - If the TTS server is not running, chat still works; replies are text-only.
 
+### Optional: Gemini Live API (voice + text)
+
+- **Live API** provides native voice and text from one model (e.g. `gemini-2.0-flash-live-preview-04-09`). It is optional and runs alongside TTS.  
+- Enable in `config/settings.yaml`: set `live.enabled: true`, set `live.model` to a Live-capable model, and use `live.api_key` (e.g. `gemini`).  
+- Then use **either** the normal TTS path (stream text → TTS speaks) **or** the Live path: send `POST /chat` with `{"message": "...", "use_live": true}` to get streamed text and base64-encoded audio in SSE.  
+- CLI: set `CORTANA_USE_LIVE=1` to use Live for chat (text is shown; audio events are not played by the CLI).
+
 ### With the Go CLI
 
 - Build: `go build -o cortana ./cli` (or build from your CI).  
 - Run: `./cortana` (from a directory where it can find the project, or set `CORTANA_URL` if the service is already running elsewhere).  
 - The CLI expects `service.py` and `tts.py` relative to the project root (it locates the project from the executable path or current working directory).
+
+### With the Go desktop UI
+
+- Run from source: `cd desktop && go run .`  
+- Build binary: `cd desktop && go build -o cortana-desktop .`  
+- Requires CGO and platform webview runtime (macOS uses WebKit; Linux usually needs `webkit2gtk`; Windows uses WebView2 runtime).  
+- Like the CLI, it starts `service.py` and `tts.py` automatically and supports slash commands in the input box.
 
 ### Optional: Ollama (local fact extraction)
 
@@ -104,6 +125,7 @@ If you have the `Cortana.app` bundle, run it. Ensure the app can find the projec
 
 | Variable | Purpose |
 |----------|---------|
+| `CORTANA_USE_LIVE` | Set to `1` or `true` so the CLI sends `use_live: true` on chat (requires `live.enabled` in config). |
 | `GEMINI_API_KEY` | Required for Gemini chat (and default TTS if using Gemini TTS). |
 | `GEMINI_PRO_API_KEY` | Optional; used for the “Pro” model if configured. |
 | `CORTANA_PORT` | HTTP service port (default 8391). |

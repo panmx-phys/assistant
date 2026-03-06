@@ -34,6 +34,8 @@ import threading
 import numpy as np
 
 _SENTENCE_END = re.compile(r'[.!?;:\n]')
+# Batch this many sentences per TTS call to avoid long pauses between sentences
+_MIN_SENTENCES_PER_CHUNK = 2
 DEFAULT_SOCKET = "/tmp/tts.sock"
 
 BACKENDS = ("kokoro", "elevenlabs", "google", "gemini")
@@ -290,26 +292,80 @@ class GeminiTTSBackend(TTSBackend):
     Emotion is conveyed via a prompt prefix (the model follows style cues).
     """
 
-    _EMOTION_PREFIX = {
-        "neutral":    "",
-        "happy":      "Say this cheerfully and warmly: ",
-        "excited":    "Say this with great excitement and energy: ",
-        "sad":        "Say this in a somber, melancholic tone: ",
-        "calm":       "Say this in a calm, soothing voice: ",
-        "serious":    "Say this in a serious, measured tone: ",
-        "playful":    "Say this in a playful, lighthearted way: ",
-        "empathetic": "Say this with empathy and compassion: ",
-        "curious":    "Say this with curiosity and wonder: ",
-        "annoyed":    "Say this with mild irritation: ",
+    # Style prompt controls overall tone.
+    _EMOTION_STYLE_PROMPT = {
+        "neutral": (
+            "You are an AI assistant speaking in a clear, friendly, and helpful tone."
+        ),
+        "happy": (
+            "You are an AI assistant speaking in a warm, upbeat, and cheerful tone."
+        ),
+        "excited": (
+            "You are an AI assistant speaking with energetic enthusiasm and bright pacing."
+        ),
+        "sad": (
+            "You are an AI assistant speaking softly with a gentle, somber tone."
+        ),
+        "calm": (
+            "You are an AI assistant speaking calmly, steadily, and reassuringly."
+        ),
+        "serious": (
+            "You are an AI assistant speaking in a measured, authoritative, and professional tone."
+        ),
+        "playful": (
+            "You are an AI assistant speaking in a playful, lighthearted, and expressive tone."
+        ),
+        "empathetic": (
+            "You are an AI assistant speaking with empathy, care, and emotional sensitivity."
+        ),
+        "curious": (
+            "You are an AI assistant speaking with inquisitive curiosity and thoughtful emphasis."
+        ),
+        "annoyed": (
+            "You are an AI assistant speaking with restrained irritation, keeping clarity and control."
+        ),
     }
 
-    def __init__(self, api_key: str = "", model: str = "gemini-2.5-flash-preview-tts",
-                 voice_name: str = "Kore", speed: float = 0):
+    # Markup tags are localized modifiers for Gemini TTS.
+    _EMOTION_MARKUP_PREFIX = {
+        "neutral": "",
+        "happy": "[laughing] ",
+        "excited": "[shouting] ",
+        "sad": "[sigh] ",
+        "calm": "[medium pause] ",
+        "serious": "[short pause] ",
+        "playful": "[laughing] ",
+        "empathetic": "[medium pause] ",
+        "curious": "[uhm] ",
+        "annoyed": "[sarcasm] ",
+    }
+
+    def __init__(
+        self,
+        api_key: str = "",
+        model: str = "gemini-2.5-flash-preview-tts",
+        voice_name: str = "Kore",
+        speed: float = 0,
+        emotion_style_global_modifier: str = "",
+        emotion_style_prompts: dict[str, str] | None = None,
+        emotion_markup_prefixes: dict[str, str] | None = None,
+    ):
         self.model = model
         self.voice_name = voice_name
         self.speed = speed
         self._client = None
         self._api_key = api_key
+        self._emotion_style_global_modifier = str(emotion_style_global_modifier or "").strip()
+        self._emotion_style_prompt = dict(self._EMOTION_STYLE_PROMPT)
+        self._emotion_markup_prefix = dict(self._EMOTION_MARKUP_PREFIX)
+        if emotion_style_prompts:
+            self._emotion_style_prompt.update(
+                {k: str(v) for k, v in emotion_style_prompts.items()}
+            )
+        if emotion_markup_prefixes:
+            self._emotion_markup_prefix.update(
+                {k: str(v) for k, v in emotion_markup_prefixes.items()}
+            )
         if not self._api_key:
             print("Warning: No API key for Gemini TTS — backend will fail.")
 
@@ -319,6 +375,19 @@ class GeminiTTSBackend(TTSBackend):
             self._client = genai.Client(api_key=self._api_key)
         return self._client
 
+    def _build_prompt(self, text: str, emotion: str) -> str:
+        style = self._emotion_style_prompt.get(
+            emotion, self._emotion_style_prompt["neutral"]
+        )
+        if self._emotion_style_global_modifier:
+            style = f"{style} {self._emotion_style_global_modifier}"
+        markup = self._emotion_markup_prefix.get(emotion, "")
+        speech_text = text.strip()
+        if markup and not speech_text.startswith("["):
+            speech_text = f"{markup}{speech_text}"
+        # Keep format compact: style prompt first, then exact speech text.
+        return f"{style}\nSpeak naturally: {speech_text}"
+
     def synthesize(self, text: str, voice: str, speed: float,
                    emotion: str = "neutral") -> np.ndarray | None:
         from google.genai import types
@@ -326,8 +395,7 @@ class GeminiTTSBackend(TTSBackend):
         client = self._ensure_client()
         vname = voice if voice and not voice.startswith("af_") else self.voice_name
 
-        prefix = self._EMOTION_PREFIX.get(emotion, "")
-        prompt = prefix + text
+        prompt = self._build_prompt(text, emotion)
 
         try:
             response = client.models.generate_content(
@@ -388,6 +456,11 @@ def create_backend(name: str, lang: str = "a") -> TTSBackend:
             model=GEMINI_TTS_CFG.get("model", "gemini-2.5-flash-preview-tts"),
             voice_name=GEMINI_TTS_CFG.get("voice_name", "Kore"),
             speed=float(GEMINI_TTS_CFG.get("speed", 0)),
+            emotion_style_global_modifier=GEMINI_TTS_CFG.get(
+                "emotion_style_global_modifier", ""
+            ),
+            emotion_style_prompts=GEMINI_TTS_CFG.get("emotion_style_prompts", {}),
+            emotion_markup_prefixes=GEMINI_TTS_CFG.get("emotion_markup_prefixes", {}),
         )
     else:
         raise ValueError(f"Unknown TTS backend: {name!r}. Choose from: {BACKENDS}")
@@ -503,14 +576,27 @@ class TTSEngine:
         self._play_t.start()
 
     def _flush_sentences(self):
+        """Flush complete sentences in batches of _MIN_SENTENCES_PER_CHUNK to avoid
+        long pauses between sentences (each chunk is one synth + one play).
+        """
         with self._state_lock:
+            batch: list[str] = []
             while _SENTENCE_END.search(self._text_buf):
                 m = _SENTENCE_END.search(self._text_buf)
-                sentence = self._text_buf[:m.end()]
-                self._text_buf = self._text_buf[m.end():]
+                sentence = self._text_buf[: m.end()]
+                self._text_buf = self._text_buf[m.end() :]
                 cleaned = _clean(sentence).strip()
                 if cleaned:
-                    self._synth_q.put(cleaned)
+                    batch.append(cleaned)
+                # Flush when we have enough sentences, or on paragraph break
+                if len(batch) >= _MIN_SENTENCES_PER_CHUNK or (
+                    batch and "\n\n" in sentence
+                ):
+                    self._synth_q.put(" ".join(batch))
+                    batch = []
+            # Put any leftover single sentence back so we don't wait forever
+            if len(batch) == 1:
+                self._text_buf = batch[0] + self._text_buf
 
     # ── Commands ──────────────────────────────────────────────────────
 

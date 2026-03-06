@@ -5,7 +5,8 @@
 - **LLM**: Gemini API (google-genai) chat; optional Ollama local + fact extraction.
 - **Memory**: ChromaDB. Fact extraction: Ollama first (`memory.ollama.extraction_model`), fallback Gemini 2.5 Flash Lite (`memory.extraction_fallback.model`, `api_key`) when Ollama unavailable. Recall: Ebbinghaus-style decay, significance, access count.
 - **TTS**: Optional Unix socket server. Backends: Kokoro, ElevenLabs, Google, Gemini. `tts.py`; client in `chat.py`.
-- **Service**: FastAPI :8391 (`CORTANA_PORT`). `/health`, `/models`, `POST /chat` (SSE), `POST /command`.
+- **Live API**: Optional Gemini Live (voice + text). When `live.enabled` in config, `POST /chat` can send `use_live: true` for streamed text and audio from Live instead of TTS. `live.py`; config `live` in settings.yaml.
+- **Service**: FastAPI :8391 (`CORTANA_PORT`). `/health`, `/models`, `POST /chat` (SSE, optional `use_live`), `POST /command`.
 - **CLI**: `cli/main.go` — starts `service.py` + `tts.py`, REPL over HTTP. Optional `Cortana.app` same CLI.
 - **Personality**: `config/personality.yaml` (`base`, `modes`). Name: Cortana.
 
@@ -26,13 +27,14 @@ User → Go CLI | Cortana.app | HTTP client
 | Path | Role |
 |------|------|
 | `config.py` | load_config, env, Gemini clients, MODELS/ALIASES/DEFAULT_MODEL, memory/TTS/debug/personality constants |
-| `config/settings.yaml` | api_keys, models, memory (chromadb, ollama, extraction_fallback, declutter), tts, debug, ui |
+| `config/settings.yaml` | api_keys, models, memory, live (enabled, model, api_key), tts, debug, ui |
 | `config/personality.yaml` | base system prompt, modes |
 | `chat.py` | Chat: history, model, send/send_stream, handle_command (slash), emotion strip, TTS client |
 | `llm.py` | call_gemini_api, stream_gemini_api, call_ollama; DebugLogger(LOG_FILE) |
 | `memory.py` | Memory: ChromaDB, _extract_facts (Ollama then Gemini fallback), recall, store, declutter, backfill, auto_declutter |
 | `tts.py` | Backends, TTSEngine, Unix server, TTS client |
-| `service.py` | FastAPI app, /health /models /chat /command, Chat(), SSE stream |
+| `service.py` | FastAPI app, /health /models /chat /command, Chat(), SSE stream; optional Live path when use_live |
+| `live.py` | run_live_turn (Gemini Live session, yields text + audio events) |
 | `lite.py` | Re-exports config, llm, Memory, Chat |
 | `cli/main.go` | ProjectDir, StartProc service+tts, WaitForHealth, REPL, StreamChat/Command |
 | `cli/client.go` | Health, Models, Command, StreamChat (SSE) |
@@ -43,7 +45,7 @@ User → Go CLI | Cortana.app | HTTP client
 ## Environment & config
 
 - **Required**: `GEMINI_API_KEY` (or key in api_keys). `.env` or env.
-- **Optional**: `GEMINI_PRO_API_KEY`, `ELEVENLABS_API_KEY`, `GOOGLE_TTS_API_KEY`, `CORTANA_PORT` (8391), `CORTANA_URL` (http://127.0.0.1:8391).
+- **Optional**: `GEMINI_PRO_API_KEY`, `ELEVENLABS_API_KEY`, `GOOGLE_TTS_API_KEY`, `CORTANA_PORT` (8391), `CORTANA_URL`, `CORTANA_USE_LIVE` (CLI: use Live for chat when live.enabled).
 - Config: `load_dotenv(BASE_DIR/.env)`, `load_config(settings.yaml)`, `${VAR}` → `os.environ.get("VAR","")`.
 
 ## Conventions
@@ -69,6 +71,7 @@ User → Go CLI | Cortana.app | HTTP client
 - **Slash command**: `chat.handle_command` in chat.py, /help, README.
 - **Config**: settings.yaml key → config.py constant → use in module.
 - **TTS backend**: TTSBackend in tts.py, create_backend, BACKENDS, settings + config TTS_*.
+- **Live API**: config live.enabled, live.model, get_live_client() in config.py; run_live_turn in live.py; use_live on POST /chat.
 - **Personality**: config/personality.yaml base/modes.
 - **Debug**: settings debug: true or /debug; data/logs/debug.log JSON-lines.
 
@@ -76,7 +79,7 @@ User → Go CLI | Cortana.app | HTTP client
 
 ```
 .  config/ settings.yaml personality.yaml
-   config.py chat.py llm.py memory.py tts.py service.py lite.py
+   config.py chat.py llm.py memory.py tts.py live.py service.py lite.py
    cli/ main.go client.go proc.go ui.go go.mod go.sum
    tests/ test_lite.py
    data/ chromadb/ logs/   (gitignored)

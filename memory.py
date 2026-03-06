@@ -37,6 +37,30 @@ class Memory:
         # Auto-declutter in a separate process if not yet run today
         self._maybe_auto_declutter()
 
+    # ── Collection safety helpers ──────────────────────────────────────────
+
+    @staticmethod
+    def _is_missing_collection_error(err: Exception) -> bool:
+        """Return True when Chroma reports a missing collection handle."""
+        return (
+            err.__class__.__name__ == "NotFoundError"
+            or "does not exist" in str(err).lower()
+        )
+
+    def _refresh_collection(self):
+        """Rebind to the configured collection, creating it if missing."""
+        self._collection = self._client.get_or_create_collection(config.COLLECTION_NAME)
+
+    def _run_with_collection_retry(self, fn):
+        """Run fn and auto-recover once from stale/missing collection handles."""
+        try:
+            return fn()
+        except Exception as e:
+            if self._is_missing_collection_error(e):
+                self._refresh_collection()
+                return fn()
+            raise
+
     # ── Fact extraction (richer details) ──────────────────────────────────
 
     def _extract_facts(self, user_msg: str, assistant_msg: str) -> list[dict]:
@@ -215,17 +239,22 @@ class Memory:
         Returns list of (fact, relative_time).
         """
         try:
-            with self._lock:
-                count = self._collection.count()
-                if count == 0:
-                    return []
-                # Fetch more candidates for re-ranking
-                fetch_n = min(limit * 5, count)
-                results = self._collection.query(
-                    query_texts=[query],
-                    n_results=fetch_n,
-                    include=["documents", "metadatas", "distances"],
-                )
+            def _query():
+                with self._lock:
+                    count = self._collection.count()
+                    if count == 0:
+                        return None
+                    # Fetch more candidates for re-ranking
+                    fetch_n = min(limit * 5, count)
+                    return self._collection.query(
+                        query_texts=[query],
+                        n_results=fetch_n,
+                        include=["documents", "metadatas", "distances"],
+                    )
+
+            results = self._run_with_collection_retry(_query)
+            if results is None:
+                return []
             if not results["documents"] or not results["documents"][0]:
                 return []
 
@@ -260,15 +289,18 @@ class Memory:
         """Increment access_count and update last_accessed for recalled memories."""
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
-            with self._lock:
-                for mem_id in ids:
-                    result = self._collection.get(ids=[mem_id], include=["metadatas"])
-                    if not result["metadatas"]:
-                        continue
-                    meta = dict(result["metadatas"][0])
-                    meta["access_count"] = meta.get("access_count", 0) + 1
-                    meta["last_accessed"] = now_iso
-                    self._collection.update(ids=[mem_id], metadatas=[meta])
+            def _update():
+                with self._lock:
+                    for mem_id in ids:
+                        result = self._collection.get(ids=[mem_id], include=["metadatas"])
+                        if not result["metadatas"]:
+                            continue
+                        meta = dict(result["metadatas"][0])
+                        meta["access_count"] = meta.get("access_count", 0) + 1
+                        meta["last_accessed"] = now_iso
+                        self._collection.update(ids=[mem_id], metadatas=[meta])
+
+            self._run_with_collection_retry(_update)
         except Exception:
             pass
 
@@ -278,20 +310,23 @@ class Memory:
         """Extract facts and store them with rich metadata (runs in background thread)."""
         extracted = self._extract_facts(user_msg, assistant_msg)
         ts = datetime.now(timezone.utc).isoformat()
-        with self._lock:
-            for item in extracted:
-                self._collection.add(
-                    ids=[str(uuid.uuid4())],
-                    documents=[item["fact"]],
-                    metadatas=[{
-                        "stored_at": ts,
-                        "significance": item["significance"],
-                        "topic": item.get("topic", "other"),
-                        "emotion": item.get("emotion", "neutral"),
-                        "access_count": 0,
-                        "last_accessed": "",
-                    }],
-                )
+        def _add():
+            with self._lock:
+                for item in extracted:
+                    self._collection.add(
+                        ids=[str(uuid.uuid4())],
+                        documents=[item["fact"]],
+                        metadatas=[{
+                            "stored_at": ts,
+                            "significance": item["significance"],
+                            "topic": item.get("topic", "other"),
+                            "emotion": item.get("emotion", "neutral"),
+                            "access_count": 0,
+                            "last_accessed": "",
+                        }],
+                    )
+
+        self._run_with_collection_retry(_add)
 
     def store(self, user_msg: str, assistant_msg: str):
         """Fire-and-forget async fact extraction."""
@@ -301,26 +336,32 @@ class Memory:
     def store_fact(self, fact: str, significance: int = 3):
         """Store a manually provided fact. Default significance=3 (user chose to remember)."""
         ts = datetime.now(timezone.utc).isoformat()
-        with self._lock:
-            self._collection.add(
-                ids=[str(uuid.uuid4())],
-                documents=[fact],
-                metadatas=[{
-                    "stored_at": ts,
-                    "significance": significance,
-                    "topic": "other",
-                    "emotion": "neutral",
-                    "access_count": 0,
-                    "last_accessed": "",
-                }],
-            )
+        def _add():
+            with self._lock:
+                self._collection.add(
+                    ids=[str(uuid.uuid4())],
+                    documents=[fact],
+                    metadatas=[{
+                        "stored_at": ts,
+                        "significance": significance,
+                        "topic": "other",
+                        "emotion": "neutral",
+                        "access_count": 0,
+                        "last_accessed": "",
+                    }],
+                )
+
+        self._run_with_collection_retry(_add)
 
     def get_all(self) -> list[str]:
         try:
-            with self._lock:
-                if self._collection.count() == 0:
-                    return []
-                return self._collection.get()["documents"]
+            def _get():
+                with self._lock:
+                    if self._collection.count() == 0:
+                        return []
+                    return self._collection.get()["documents"]
+
+            return self._run_with_collection_retry(_get)
         except Exception:
             return []
 
@@ -347,11 +388,16 @@ class Memory:
 
     def backfill_significance(self) -> tuple[int, int]:
         """Score all memories that lack a significance value. Returns (scored, total)."""
-        with self._lock:
-            count = self._collection.count()
-            if count == 0:
-                return 0, 0
-            all_data = self._collection.get(include=["metadatas", "documents"])
+        def _get_all_for_backfill():
+            with self._lock:
+                count = self._collection.count()
+                if count == 0:
+                    return 0, None
+                return count, self._collection.get(include=["metadatas", "documents"])
+
+        count, all_data = self._run_with_collection_retry(_get_all_for_backfill)
+        if count == 0 or all_data is None:
+            return 0, 0
 
         ids = all_data["ids"]
         docs = all_data["documents"]
@@ -367,8 +413,11 @@ class Memory:
             score = self._score_fact(doc)
             updated_meta = dict(meta) if meta else {}
             updated_meta["significance"] = score
-            with self._lock:
-                self._collection.update(ids=[id_], metadatas=[updated_meta])
+            def _update():
+                with self._lock:
+                    self._collection.update(ids=[id_], metadatas=[updated_meta])
+
+            self._run_with_collection_retry(_update)
 
         return len(unscored), count
 
@@ -396,14 +445,18 @@ class Memory:
           - Stamps last-run date for auto-declutter scheduling
         Returns (before, after).
         """
-        with self._lock:
-            count = self._collection.count()
-            if count == 0:
-                return 0, 0
-            all_data = self._collection.get(include=["documents", "metadatas"])
+        def _get_all_for_declutter():
+            with self._lock:
+                count = self._collection.count()
+                if count == 0:
+                    return 0, None
+                return count, self._collection.get(include=["documents", "metadatas"])
+
+        count, all_data = self._run_with_collection_retry(_get_all_for_declutter)
+        if count == 0 or all_data is None:
+            return 0, 0
 
         docs = all_data["documents"]
-        ids = all_data["ids"]
         metas = all_data["metadatas"]
         before = len(docs)
 
@@ -521,14 +574,18 @@ class Memory:
                 "last_accessed": old_meta.get("last_accessed", "") if old_meta else "",
             })
 
-        # Replace collection — lock held only for the atomic swap + single batch add
-        with self._lock:
-            self._client.delete_collection(config.COLLECTION_NAME)
-            self._collection = self._client.get_or_create_collection(config.COLLECTION_NAME)
-            if new_ids:
-                self._collection.add(
-                    ids=new_ids, documents=new_docs, metadatas=new_metas,
-                )
+        # Replace documents in-place to avoid invalidating external collection handles.
+        def _replace_docs_in_place():
+            with self._lock:
+                existing_ids = self._collection.get()["ids"]
+                if existing_ids:
+                    self._collection.delete(ids=existing_ids)
+                if new_ids:
+                    self._collection.add(
+                        ids=new_ids, documents=new_docs, metadatas=new_metas,
+                    )
+
+        self._run_with_collection_retry(_replace_docs_in_place)
 
         # Stamp declutter date
         self._stamp_declutter()
@@ -557,17 +614,24 @@ class Memory:
         """Spawn a separate process to run declutter if it hasn't been run today."""
         if not self._declutter_needed():
             return
-        with self._lock:
-            count = self._collection.count()
+        def _count():
+            with self._lock:
+                return self._collection.count()
+
+        count = self._run_with_collection_retry(_count)
         if count < 10:
             # Not enough memories to bother decluttering
             return
         threading.Thread(target=self._run_declutter, daemon=True).start()
 
     def delete_all(self):
-        with self._lock:
-            self._client.delete_collection(config.COLLECTION_NAME)
-            self._collection = self._client.get_or_create_collection(config.COLLECTION_NAME)
+        def _clear():
+            with self._lock:
+                ids = self._collection.get()["ids"]
+                if ids:
+                    self._collection.delete(ids=ids)
+
+        self._run_with_collection_retry(_clear)
 
     def _run_declutter(self):
         """Background thread for auto-declutter."""

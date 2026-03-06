@@ -108,6 +108,20 @@ with open(BASE_DIR / "config" / "personality.yaml") as _f:
     _personality = yaml.safe_load(_f)
 SYSTEM_PROMPT = _personality.get("base", "")
 
+# ── Live API config (optional voice + text) ───────────────────────────
+LIVE_CFG = CFG.get("live", {})
+LIVE_ENABLED = bool(LIVE_CFG.get("enabled", False))
+LIVE_MODEL = LIVE_CFG.get("model", "gemini-2.0-flash-live-001")
+LIVE_API_KEY = LIVE_CFG.get("api_key", "gemini")
+
+
+def get_live_client() -> genai.Client | None:
+    """Return the Gemini client for Live API, or None if disabled/unconfigured."""
+    if not LIVE_ENABLED:
+        return None
+    return _gemini_clients.get(LIVE_API_KEY, _gemini_client)
+
+
 # ── TTS config ───────────────────────────────────────────────────────
 TTS_CFG = CFG.get("tts", {})
 TTS_BACKEND = TTS_CFG.get("backend", "kokoro")
